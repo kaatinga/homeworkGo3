@@ -9,8 +9,8 @@ import (
 func (O *Order) SendEmail(s *Shop) error {
 
 	// user we are authorizing as
-	from := "aramakenoreplay@gmail.com"
-	password := "8mZt3qcbkzL7Xqd01HuS"
+	from := "noreplay@gmail.com"
+	password := "123"
 
 	// server we are authorized to send email through
 	host := "smtp.gmail.com"
