@@ -10,7 +10,7 @@ import (
 
 const (
 	port      = "8080"
-	HTMLBegin = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>%encoder</title>\n</head>\n<body>"
+	HTMLBegin = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>%s</title>\n</head>\n<body>"
 	HTMLEnd   = "</body>\n</html>"
 )
 
@@ -49,7 +49,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := fmt.Fprintf(w, "Welcome, %encoder!", name)
+	_, err := fmt.Fprintf(w, "Welcome, %s!", name)
 	if err != nil {
 		log.Println(err)
 	}
@@ -112,7 +112,7 @@ func (s *Shop) requestChecks(w http.ResponseWriter, r *http.Request) (basket *Ba
 
 	var (
 		basketCookie *http.Cookie
-		err        error
+		err          error
 	)
 
 	// читаем куку
@@ -121,12 +121,10 @@ func (s *Shop) requestChecks(w http.ResponseWriter, r *http.Request) (basket *Ba
 		log.Println("cookie", cookieName, " was not found")
 	} else {
 
-		err = s.encoder.Decode("cookie-name", basketCookie.Value, &basket.list)
+		err = s.encoder	.Decode(cookieName, basketCookie.Value, &basket.list)
 		if err != nil {
 			log.Println("Ошибка обработки данных куки:", err)
 		}
-
-		log.Println(basket.list)
 	}
 
 	var currentAmount byte
@@ -138,18 +136,18 @@ func (s *Shop) requestChecks(w http.ResponseWriter, r *http.Request) (basket *Ba
 			log.Println(err)
 		}
 	} else {
-		err = basket.AddGood(goodIDUint16, currentAmount + goodAmountByte)
+		err = basket.AddGood(goodIDUint16, currentAmount+goodAmountByte)
 		if err != nil {
 			log.Println(err)
 		}
 	}
 
-	if encodedBasket, err := s.encoder.Encode("cookie-name", basket.list); err == nil {
+	if encodedBasket, err := s.encoder.Encode(cookieName, basket.list); err == nil {
 
 		formCookie := &http.Cookie{
 			Name:     cookieName,
 			Value:    encodedBasket,
-			Path:     "/shop",
+			Path:     "/",
 			MaxAge:   3000,                    // 50 минут
 			Secure:   false,                   // yet 'false' as TLS is not used
 			HttpOnly: true,                    // 'true' secures from XSS attacks
@@ -166,13 +164,27 @@ func (s *Shop) requestChecks(w http.ResponseWriter, r *http.Request) (basket *Ba
 
 func (s *Shop) shop(w http.ResponseWriter, r *http.Request) {
 
-	basket := NewBasket()
+	var (
+		basket = NewBasket()
+		err    error
+	)
 
 	if r.Method == "POST" {
 		basket = s.requestChecks(w, r)
-		log.Println(basket)
 	} else {
-		log.Println("No POST data available")
+		log.Println("No POST data is available, just reading cookie")
+
+		// только вычитываем данные из куки
+		var basketCookie *http.Cookie
+		basketCookie, err = r.Cookie("testShop")
+		if err != nil {
+			log.Println("cookie 'testShop' was not found")
+		} else {
+			err = s.encoder.Decode("testShop", basketCookie.Value, &basket.list)
+			if err != nil {
+				log.Println("Ошибка обработки данных куки:", err)
+			}
+		}
 	}
 
 	var (
@@ -180,7 +192,7 @@ func (s *Shop) shop(w http.ResponseWriter, r *http.Request) {
 		goodList string
 	)
 
-	_, err := fmt.Fprintf(w, HTMLBegin, title)
+	_, err = fmt.Fprintf(w, HTMLBegin, title)
 	if err != nil {
 		log.Println(err)
 	}
@@ -198,81 +210,103 @@ func (s *Shop) shop(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 
-	fmt.Fprint(w, "<h2>Ваша карзина</h2>")
+	// чертим карзину
+	_, err = fmt.Fprint(w, s.drawBasket(basket))
+	if err != nil {
+		log.Println(err)
+	}
 
-	var total, cost uint64
-	for key, value := range basket.list {
-
-		good, ok := s.GetGood(key)
-		if ok {
-			cost = good.price*uint64(value)
-			_, err = fmt.Fprint(w, "Товар: ", good.name, ", кол-во: ", value,", цена: ", cost , "<br>")
-			if err != nil {
-				log.Println(err)
-			}
-
-		total = total + cost
-
-		} else {
-			log.Println("Товар не найден")
+	// кнопки: очистка куки и формирование заказа
+	if len(basket.list) != 0 {
+		_, err = fmt.Fprint(w, "<form action=/shop method=post><input type=hidden name=clear value=clear><button type=submit>Очистить карзину</button></form><form action=/order method=get><button type=submit>Сформировать заказ</button></form>")
+		if err != nil {
+			log.Println(err)
 		}
-	}
-
-	// Итого
-	_, err = fmt.Fprint(w, "<p>ИТОГО:" , total, "</p>")
-	if err != nil {
-		log.Println(err)
-	}
-
-
-	// очистка куки
-	_, err = fmt.Fprint(w, "<form action=/shop method=post><input type=hidden name=clear value=clear><button type=submit>Очистить карзину</button></form>")
-	if err != nil {
-		log.Println(err)
-	}
-
-	// формирование заказа
-	_, err = fmt.Fprint(w, "<form action=/order method=get><button type=submit>Сформировать заказ</button></form>")
-	if err != nil {
-		log.Println(err)
 	}
 
 	fmt.Fprint(w, HTMLEnd)
 
 }
 
+func (s *Shop) drawBasket(basket *Basket) (basketString string) {
+
+	var cost, total uint64
+	basketString = "<h2>Ваша карзина</h2>"
+
+	for key, value := range basket.list {
+
+		good, ok := s.GetGood(key)
+		if ok {
+			cost = good.price * uint64(value)
+			basketString = fmt.Sprint(basketString, "Товар: ", good.name, ", кол-во: ", value, ", цена: ", cost, "<br>")
+			total = total + cost
+		} else {
+			log.Println("Товар не найден")
+		}
+	}
+
+	// Итого
+	basketString = fmt.Sprint(basketString, "<p>ИТОГО:", total, "</p>")
+	return
+}
+
 func (s *Shop) order(w http.ResponseWriter, r *http.Request) {
-	title := "A handler to make order"
 
-	orderID := r.URL.Query().Get("order")
+	var (
+		cookieName = "testShop"
+		title      = "A handler to make order"
+		err        error
+		basket     = NewBasket()
+	)
 
-	if orderID == "" {
-		log.Println("Ошибка при ввода номера заказа")
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	// вычитываем данные из куки
+	var basketCookie *http.Cookie
+	basketCookie, err = r.Cookie(cookieName)
+	if err != nil {
+		log.Println("cookie", cookieName, " was not found")
+	} else {
+		err = s.encoder.Decode(cookieName, basketCookie.Value, &basket.list)
+		if err != nil {
+			log.Println("Ошибка обработки данных куки:", err)
+		}
 	}
 
-	_, ok := assets.StUint16(orderID)
-	if !ok {
-		log.Println("Ошибка при ввода номера заказа. Допустимы только числа")
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	// удаление карзины
+	deleteCookie := &http.Cookie{
+		Name:   cookieName,
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
 	}
 
-	_, err := fmt.Fprintf(w, HTMLBegin, title)
+	http.SetCookie(w, deleteCookie)
+
+	_, err = fmt.Fprintf(w, HTMLBegin, title)
 	if err != nil {
 		log.Println(err)
 	}
 
-	_, err = fmt.Fprintf(w, "Order ID is %encoder", orderID)
+	// чертим карзину
+	_, err = fmt.Fprint(w, s.drawBasket(basket))
 	if err != nil {
 		log.Println(err)
 	}
 
-	//err = encoder.SendEmail(fmt.Sprintf("Спасибо за то что Вы сделали заказ. Ваш номер заказа: %encoder", orderID))
-	//if err != nil {
-	//	log.Println(err)
-	//}
+	order := s.NewOrder(basket, &Client{
+		ID:    1,
+		Name:  "Michael",
+		Email: "kaatinga@gmail.com",
+	})
+
+	_, err = fmt.Fprintf(w, "Order is composed and a notification was sent via email!")
+	if err != nil {
+		log.Println(err)
+	}
+
+	err = order.SendEmail(s)
+	if err != nil {
+		log.Println(err)
+	}
 
 	_, err = fmt.Fprint(w, HTMLEnd)
 	if err != nil {

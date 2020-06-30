@@ -6,14 +6,11 @@ import (
 	"net/smtp"
 )
 
-func (O *Order) SendEmail(message string) error {
+func (O *Order) SendEmail(s *Shop) error {
+
 	// user we are authorizing as
-	from := "noreplay@gmail.com"
-
-	password := "123"
-
-	// use we are sending email to
-	to := "kaatinga@gmail.com"
+	from := "aramakenoreplay@gmail.com"
+	password := "8mZt3qcbkzL7Xqd01HuS"
 
 	// server we are authorized to send email through
 	host := "smtp.gmail.com"
@@ -25,18 +22,42 @@ func (O *Order) SendEmail(message string) error {
 	// NOTE: Using the backtick here ` works like a heredoc, which is why all the
 	// rest of the lines are forced to the beginning of the line, otherwise the
 	// formatting is wrong for the RFC 822 style
-	message = fmt.Sprintf(`To: "Some User" <someuser@example.com>
-From: "Other User" <otheruser@example.com>
+	message := fmt.Sprintf(`To: "Test User" <%s>
+From: "Kaatinga Test Shop" <%s>
 Subject: Test Shop Notification
+MIME-version: 1.0
+Content-Type: text/plain; charset="UTF-8"
 
-%encoder!
-`, message)
+Hello, %s!
 
-	if err := smtp.SendMail(host+":587", auth, from, []string{to}, []byte(message)); err != nil {
+Thank you very much for your order.
+
+The information about the order is below:
+`, O.Email, from, O.Name)
+
+	var total uint64
+
+	for key, value := range O.Basket.list {
+
+		good, ok := s.GetGood(key)
+		if ok {
+			message = fmt.Sprintf(`%sТовар: %s, Кол-во:%d, Цена: %d  
+`, message, good.name, value, uint64(value)*good.price)
+
+			total = total + uint64(value)*good.price
+		}
+	}
+
+	message = fmt.Sprint(message, `
+ИТОГО:`, total)
+
+	fmt.Println(message)
+
+	if err := smtp.SendMail(host+":587", auth, from, []string{O.Email}, []byte(message)); err != nil {
 		log.Println("Error SendMail: ", err)
 		return err
 	}
 
-	fmt.Println("Email Sent!")
+	log.Println("Email Sent!")
 	return nil
 }
